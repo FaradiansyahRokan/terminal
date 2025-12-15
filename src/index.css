@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+
+/* === CUSTOM SCROLLBAR (BLOOMBERG STYLE) === */
+
+/* Class Utility */
+.custom-scrollbar {
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: #333 #000; /* Firefox */
+}
+
+/* Chrome, Edge, and Safari */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;  /* Lebar Vertical */
+  height: 6px; /* Tinggi Horizontal */
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #050505; /* Warna Track (Jalur) - Gelap pekat */
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #222; /* Warna Handle - Abu gelap */
+  border-radius: 10px;    /* Membulat */
+  border: 1px solid #050505; /* Padding trick */
+}
+
+/* Efek Hover: Berubah jadi Cyan Neon */
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: #00D9FF; 
+  box-shadow: 0 0 10px rgba(0, 217, 255, 0.5); /* Glowing Effect */
+}
+
+/* Corner (Pertemuan horizontal & vertical) */
+.custom-scrollbar::-webkit-scrollbar-corner {
+  background: #050505;
+}
