@@ -12,7 +12,7 @@ import {
     CrosshairMode 
 } from 'lightweight-charts';
 import { formatNumber } from '../utils/constants'; 
-import { Settings, Clock, X } from 'lucide-react'; // Import X
+import { Settings, Clock } from 'lucide-react';
 
 const TIMEFRAMES = ['1m', '5m', '15m', '30m', '1H', '2H', '4H', '1D', '1W', '1M'];
 
@@ -70,7 +70,7 @@ const ChartWidget = ({ selectedAsset, timeframe, setTimeframe, candleData, lastC
             borderVisible: true 
         },
         Line: { color: ACCENT_COLOR, lineWidth: 2, lineType: LineType.Simple },
-        StepLine: { color: '#FFD700', lineWidth: 2, lineType: LineType.Step }, 
+        StepLine: { color: '#FFD700', lineWidth: 2, lineType: LineType.Step }, // Warning color (Yellow/Gold)
         Area: { topColor: `${ACCENT_COLOR}44`, bottomColor: `${BG_DARK}00`, lineColor: ACCENT_COLOR, lineWidth: 2 },
         Baseline: { 
             topLineColor: TEXT_SUCCESS, 
@@ -93,13 +93,16 @@ const ChartWidget = ({ selectedAsset, timeframe, setTimeframe, candleData, lastC
             else if (timeframe.endsWith('H')) duration = parseInt(timeframe) * 3600;
             else if (timeframe.endsWith('D')) duration = parseInt(timeframe) * 86400;
             else if (timeframe.endsWith('W')) duration = parseInt(timeframe) * 604800;
-            else if (timeframe.endsWith('M')) duration = 2592000; 
+            else if (timeframe.endsWith('M')) duration = 2592000; // 30 hari sebagai perkiraan
 
             const nextCandleTime = Math.ceil(now / duration) * duration;
             const diff = nextCandleTime - now;
             
+            // Handle timer habis
             if (diff <= 0) {
+                 // Langsung trigger fetch data baru (mock logic)
                  setCountdown('00:00');
+                 // Anda mungkin ingin me-trigger re-fetch data di sini
                  return;
             }
 
@@ -137,6 +140,7 @@ const ChartWidget = ({ selectedAsset, timeframe, setTimeframe, candleData, lastC
         if (!chartContainerRef.current) return;
 
         const chart = createChart(chartContainerRef.current, {
+            // Layout menggunakan HARDCODE CONFIG
             layout: { 
                 background: { type: ColorType.VerticalGradient, topColor: chartConfig.topColor, bottomColor: chartConfig.bottomColor }, 
                 textColor: chartConfig.textColor,
@@ -152,7 +156,7 @@ const ChartWidget = ({ selectedAsset, timeframe, setTimeframe, candleData, lastC
             localization: {
                 locale: 'id-ID', 
                 dateFormat: 'dd MMM yyyy',
-                priceFormatter: (price) => formatNumber(price, price < 0.1 ? 5 : 2) 
+                priceFormatter: (price) => formatNumber(price, price < 0.1 ? 5 : 2) // Price Precision Dinamis
             },
             timeScale: { 
                 timeVisible: true, secondsVisible: false, borderColor: BORDER_COLOR, rightOffset: 12, fixLeftEdge: true, minBarSpacing: 5,
@@ -191,6 +195,7 @@ const ChartWidget = ({ selectedAsset, timeframe, setTimeframe, candleData, lastC
             grid: { vertLines: { color: chartConfig.gridColor }, horzLines: { color: chartConfig.gridColor } }
         });
         
+        // Apply new styles to existing series if available
         if (seriesInstanceRef.current) {
             seriesInstanceRef.current.applyOptions(chartStyles[chartType]);
         }
@@ -290,6 +295,7 @@ const ChartWidget = ({ selectedAsset, timeframe, setTimeframe, candleData, lastC
             });
         } else { chart.unsubscribeCrosshairMove(); }
 
+        // Cleanup function for series/chart update (already defined in initial effect, but useful here too)
         return () => { chart.unsubscribeCrosshairMove(); };
     }, [chartType, candleData, showTooltip, chartStyles]); 
 
@@ -315,6 +321,7 @@ const ChartWidget = ({ selectedAsset, timeframe, setTimeframe, candleData, lastC
     
     // --- 7. RENDER COMPONENT ---
 
+    // Data OHL Realtime untuk Header
     const currentOhlc = lastCandle || (candleData.length > 0 ? candleData[candleData.length - 1] : null);
     const formatPrice = (p) => formatNumber(p, priceData.price < 0.1 ? 5 : 2);
 
@@ -369,6 +376,7 @@ const ChartWidget = ({ selectedAsset, timeframe, setTimeframe, candleData, lastC
                     <div className={`flex bg-[#0D0D0D] border ${BORDER_COLOR} p-0.5 max-w-[250px] overflow-x-auto no-scrollbar`}>
                         {TIMEFRAMES.map(tf => (
                             <button key={tf} onClick={() => setTimeframe(tf)} 
+                            // Hardcode Accent Color
                             className={`px-2 py-0.5 text-[10px] font-bold whitespace-nowrap transition-colors ${timeframe === tf ? `bg-amber-500 text-black shadow-[0_0_8px_#F59E0B]` : 'text-gray-500 hover:text-white'}`}
                             >
                                 {tf}
@@ -393,6 +401,7 @@ const ChartWidget = ({ selectedAsset, timeframe, setTimeframe, candleData, lastC
                     </div>
                     <div className="max-h-64 overflow-y-auto custom-scrollbar pr-1">
                         <div className="text-[9px] text-gray-500 font-bold mb-1 mt-1 border-b border-[#222] pb-1">BACKGROUND & GRID</div>
+                        {/* INPUTS MENGGUNAKAN HARDCODE */}
                         <ColorInput label="Bg Top" value={chartConfig.topColor} onChange={(v) => updateConfig('topColor', v)} />
                         <ColorInput label="Bg Bottom" value={chartConfig.bottomColor} onChange={(v) => updateConfig('bottomColor', v)} />
                         <ColorInput label="Grid Color" value={chartConfig.gridColor} onChange={(v) => updateConfig('gridColor', v)} />
@@ -403,6 +412,7 @@ const ChartWidget = ({ selectedAsset, timeframe, setTimeframe, candleData, lastC
                                 <ColorInput label="Down Color" value={chartStyles[chartType].downColor} onChange={(v) => updateStyle(chartType, 'downColor', v)} />
                             </>
                         )}
+                        {/* Tambahkan input warna lain yang relevan di sini jika diperlukan */}
                     </div>
                 </div>
             )}

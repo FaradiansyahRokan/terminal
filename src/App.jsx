@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { BinanceService, FinnhubService, CryptoCompareService } from './services/api'; 
 import { formatNumber, MARKET_CATEGORIES, ASSET_LISTS } from './utils/constants'; 
-// import calculateRSI from './utils/indicators'; // Dihapus, menggunakan technicalindicators
-import { RSI } from 'technicalindicators'; // Diimpor
+import { calculateRSI } from './utils/indicators';
 
 // Import Components
 import Header from './components/Header';
@@ -12,6 +11,7 @@ import OrderBook from './components/OrderBook';
 import MarketStats from './components/MarketStats';
 import ScreenerPanel from './components/ScreenerPanel';
 import NewsFeed from './components/NewsFeed';
+// import NewsReader from './components/NewsReader';
 import TickerTape from './components/TickerTape';
 
 // --- HARDCODED COLORS DARI FILE LAIN (Untuk Drag Handle & Tabs) ---
@@ -28,11 +28,8 @@ const App = () => {
     const [timeframe, setTimeframe] = useState('1H');
     const [searchQuery, setSearchQuery] = useState('');
     const [activePanel, setActivePanel] = useState('screener');
-    
-    // viewMode dan selectedArticle dihapus
-    // const [viewMode, setViewMode] = useState('chart'); 
-    // const [selectedArticle, setSelectedArticle] = useState(null); 
-    
+    const [viewMode, setViewMode] = useState('chart');
+    // const [selectedArticle, setSelectedArticle] = useState(null);
     const [combinedAssets, setCombinedAssets] = useState([]);
     
     // UI/RESIZE STATE
@@ -53,7 +50,6 @@ const App = () => {
     const [loading, setLoading] = useState(false);
     const [scanning, setScanning] = useState(false);
     const [globalNews, setGlobalNews] = useState([]);
-    const [rsiData, setRsiData] = useState([]); // State untuk RSI Data Chart
 
     // GLOBAL HEADER STATS
     const [marketCap, setMarketCap] = useState(0);
@@ -65,8 +61,8 @@ const App = () => {
     ]);
 
     // REFS
-    const wsRef = useRef(null); 
-    const watchlistWsRef = useRef(null); 
+    const wsRef = useRef(null); // Ref untuk Selected Asset (Chart/OrderBook)
+    const watchlistWsRef = useRef(null); // Ref BARU untuk Realtime Watchlist
     const activeAssetRef = useRef(selectedAsset);
     const mainContentRef = useRef(null); 
 
@@ -75,29 +71,24 @@ const App = () => {
     // 2. HELPER: CATEGORY CHECK
     const isCrypto = activeCategory === MARKET_CATEGORIES.CRYPTO;
 
-    // 3. MEMO: REALTIME PRICE STATS (RSI Header Calculation - Menggunakan data sederhana)
-    // NOTE: calculateRSI dari utils sudah dihapus, kita hitung RSI sederhana dari candle data
+    // 3. MEMO: REALTIME PRICE STATS (RSI Calculation)
     const realtimePriceStats = useMemo(() => {
         const assetInfo = assets.find(a => a.symbol === selectedAsset || a.symbol === selectedAsset + 'USDT');
         
         const currentPrice = (isCrypto && lastCandle) ? lastCandle.close : (assetInfo ? assetInfo.price : 0);
         
         let realRSI = '50';
-        // Hitung RSI sederhana untuk display header (menggunakan candleData)
         if (candleData.length > 14) {
-             const closes = candleData.map(c => c.close).filter(c => c != null);
-             if (closes.length >= 14) {
-                 const rsiCalc = RSI.calculate({ values: closes, period: 14 });
-                 realRSI = rsiCalc.length > 0 ? rsiCalc[rsiCalc.length - 1].toFixed(2) : '50';
-             }
+            const closes = candleData.map(c => c.close);
+            if (isCrypto && lastCandle) closes.push(lastCandle.close); 
+            realRSI = calculateRSI(closes);
         }
-
 
         return {
             price: currentPrice,
             positive: (assetInfo ? assetInfo.pct : 0) >= 0,
             changePct: assetInfo ? assetInfo.pct.toFixed(2) : '0.00',
-            rsi: realRSI, // RSI untuk display di MarketStats
+            rsi: realRSI,
             volume: assetInfo ? assetInfo.vol : 0, 
             high: assetInfo ? assetInfo.high : 0, 
             low: assetInfo ? assetInfo.low : 0, 
@@ -138,7 +129,7 @@ const App = () => {
 
     // 5. FETCH ASSET DATA (Indices, Major Market, Watchlist)
     
-    // 5a. FETCH INDICES
+    // 5a. FETCH INDICES (Dibutuhkan untuk Header)
     const fetchIndices = async () => {
         const newIndices = await Promise.all(
             indices.map(async (index) => {
@@ -146,16 +137,20 @@ const App = () => {
                 const price = quote.price > 0 ? quote.price : index.price;
                 const pct = quote.pct !== 0 ? quote.pct : 0; 
                 
-                return { ...index, price: price, pct: pct, positive: pct >= 0 };
+                return {
+                    ...index,
+                    price: price,
+                    pct: pct, 
+                    positive: pct >= 0,
+                };
             })
         );
         setIndices(newIndices);
         return newIndices;
     };
 
-    // 5b. FETCH MAJOR MARKET SNAPSHOT
+    // 5b. FETCH MAJOR MARKET SNAPSHOT (Dibutuhkan untuk TickerTape)
     const fetchMajorMarketSnapshot = async () => {
-        // ... (Logic remains the same) ...
         try {
             const majorAssets = ASSET_LISTS.MAJOR_MARKET;
             let promises = majorAssets.map(async (item) => {
@@ -175,37 +170,46 @@ const App = () => {
                 
                 if (!quote || quote.price === 0) return null;
 
-                return { symbol: symbolTicker.replace('=X', ''), name: item.name, price: quote.price, pct: quote.pct };
+                return {
+                    symbol: symbolTicker.replace('=X', ''),
+                    name: item.name,
+                    price: quote.price,
+                    pct: quote.pct,
+                };
             });
 
             const results = await Promise.all(promises);
             const snapshot = results.filter(r => r !== null);
             setCombinedAssets(snapshot); 
-        } catch (e) { console.error("Fetch Major Market Snapshot Error:", e); }
+
+        } catch (e) {
+            console.error("Fetch Major Market Snapshot Error:", e);
+        }
     };
 
-    // 5c. FETCH WATCHLIST
+    // 5c. FETCH WATCHLIST (Digunakan untuk inisialisasi dan sinkronisasi non-crypto)
     const fetchWatchlist = async () => {
-        // ... (Logic remains the same) ...
         try {
             setLoading(true); 
             let fetchedAssets = []; 
             
             if (!isCrypto) {
+                // Default Stats untuk non-crypto
                 setVolume24h(100000000000);   
                 setMarketCap(2500000000000); 
                 setBtcDom(0); 
             }
             
+            // Logika Crypto Assets (Digunakan untuk mendapatkan daftar awal dan sinkronisasi statik)
             const cryptos = [
-                 'BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'TRX', 'LTC', 'BCH',
-                 'DOT', 'AVAX', 'LINK', 'UNI', 'ATOM', 'XLM', 'ETC', 'FIL', 'ICP',
-                 'ARB', 'OP', 'MATIC', 'NEAR', 'APT', 'SUI', 'INJ', 'AAVE', 'CRV',
-                 'LDO', 'RUNE', 'GMX', 'SNX', 'DYDX',
-                 'FET', 'AGIX', 'OCEAN', 'RNDR', 'TAO', 'WLD',
-                 'IMX', 'GALA', 'SAND', 'MANA', 'AXS', 'ENJ', 'APE',
-                 'SHIB', 'PEPE', 'FLOKI', 'BONK', 'WIF', 'BOME',
-                 'DOGE', 'BABYDOGE', 'BRETT', 'TURBO'
+                'BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'TRX', 'LTC', 'BCH',
+                'DOT', 'AVAX', 'LINK', 'UNI', 'ATOM', 'XLM', 'ETC', 'FIL', 'ICP',
+                'ARB', 'OP', 'MATIC', 'NEAR', 'APT', 'SUI', 'INJ', 'AAVE', 'CRV',
+                'LDO', 'RUNE', 'GMX', 'SNX', 'DYDX',
+                'FET', 'AGIX', 'OCEAN', 'RNDR', 'TAO', 'WLD',
+                'IMX', 'GALA', 'SAND', 'MANA', 'AXS', 'ENJ', 'APE',
+                'SHIB', 'PEPE', 'FLOKI', 'BONK', 'WIF', 'BOME',
+                'DOGE', 'BABYDOGE', 'BRETT', 'TURBO'
             ];
 
 
@@ -215,9 +219,13 @@ const App = () => {
                     fetchedAssets = tickers
                         .filter(t => cryptos.some(c => t.symbol === c + 'USDT'))
                         .map(t => ({
-                            symbol: t.symbol.replace('USDT',''), price: parseFloat(t.lastPrice),
-                            change: parseFloat(t.priceChange), pct: parseFloat(t.priceChangePercent),
-                            vol: parseFloat(t.quoteVolume), high: parseFloat(t.highPrice), low: parseFloat(t.lowPrice),
+                            symbol: t.symbol.replace('USDT',''),
+                            price: parseFloat(t.lastPrice),
+                            change: parseFloat(t.priceChange),
+                            pct: parseFloat(t.priceChangePercent),
+                            vol: parseFloat(t.quoteVolume),
+                            high: parseFloat(t.highPrice),
+                            low: parseFloat(t.lowPrice),
                         }));
                     
                     setVolume24h(fetchedAssets.reduce((acc, a) => acc + a.vol, 0));
@@ -226,6 +234,7 @@ const App = () => {
                 }
 
             } else {
+                // Logika Non-Crypto (Stock/Forex/Indices)
                 let targetList = [];
                 if (activeCategory === MARKET_CATEGORIES.STOCKS) targetList = ASSET_LISTS.STOCKS;
                 else if (activeCategory === MARKET_CATEGORIES.FOREX) targetList = ASSET_LISTS.FOREX;
@@ -235,8 +244,10 @@ const App = () => {
                     const quote = await FinnhubService.getQuote(item.symbol); 
                     if (!quote || quote.price === 0) return null;
                     
-                    return { symbol: item.symbol, name: item.name, price: quote.price, change: quote.change,
-                        pct: quote.pct, vol: quote.vol || 0, high: quote.high, low: quote.low };
+                    return {
+                        symbol: item.symbol, name: item.name, price: quote.price, change: quote.change,
+                        pct: quote.pct, vol: quote.vol || 0, high: quote.high, low: quote.low
+                    };
                 });
                 
                 const results = await Promise.all(promises);
@@ -266,40 +277,49 @@ const App = () => {
 
         let combined = [...finnhubGeneral, ...finnhubForex];
         
+        // Catatan: Karena YahooService.getAssetNews hanya untuk aset spesifik, 
+        // kita tidak bisa langsung menggunakannya untuk 'Global News' tanpa simbol.
+        // Jika Anda memiliki API yang terpisah untuk Yahoo Global News, tambahkan di sini.
+
+        // combined = [...combined, ...yahooGlobalNews]; // <-- Jika Anda punya sumber lain
+
         // Urutkan berdasarkan tanggal
         combined.sort((a, b) => (b.datetime || 0) - (a.datetime || 0)); 
         
-        // Hapus duplikasi
-        const uniqueNews = Array.from(new Set(combined.map(a => a.url))).map(url => combined.find(a => a.url === url));
+        // Hapus duplikasi (optional)
+        const uniqueNews = Array.from(new Set(combined.map(a => a.id))).map(id => combined.find(a => a.id === id));
 
         setGlobalNews(uniqueNews); 
 
     } catch (e) {
         console.error("Fetch Global News Error:", e);
     }
-    };
+};
 
     // 6. EFFECT: INITIAL LOAD, POLLING (Non-Crypto) & WATCHLIST WS (Crypto)
     useEffect(() => {
-        // ... (Logic tetap sama) ...
+        // 6a. CLEANUP WS LAMA
         if (watchlistWsRef.current) watchlistWsRef.current.close();
         let pollingInterval = null;
 
+        // 6b. AMBIL DATA AWAL & MAJOR SNAPSHOT
         fetchWatchlist();
         fetchMajorMarketSnapshot();
         fetchGlobalNews();
 
         if (isCrypto) {
             // LOGIC 6c: CRYPTO REALTIME WATCHLIST
+            
+            // List symbol dari watchlist (harus sama dengan yang ada di fetchWatchlist)
             const cryptos = [
-                 'BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'TRX', 'LTC', 'BCH',
-                 'DOT', 'AVAX', 'LINK', 'UNI', 'ATOM', 'XLM', 'ETC', 'FIL', 'ICP',
-                 'ARB', 'OP', 'MATIC', 'NEAR', 'APT', 'SUI', 'INJ', 'AAVE', 'CRV',
-                 'LDO', 'RUNE', 'GMX', 'SNX', 'DYDX',
-                 'FET', 'AGIX', 'OCEAN', 'RNDR', 'TAO', 'WLD',
-                 'IMX', 'GALA', 'SAND', 'MANA', 'AXS', 'ENJ', 'APE',
-                 'SHIB', 'PEPE', 'FLOKI', 'BONK', 'WIF', 'BOME',
-                 'DOGE', 'BABYDOGE', 'BRETT', 'TURBO'
+                'BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'ADA', 'DOGE', 'TRX', 'LTC', 'BCH',
+                'DOT', 'AVAX', 'LINK', 'UNI', 'ATOM', 'XLM', 'ETC', 'FIL', 'ICP',
+                'ARB', 'OP', 'MATIC', 'NEAR', 'APT', 'SUI', 'INJ', 'AAVE', 'CRV',
+                'LDO', 'RUNE', 'GMX', 'SNX', 'DYDX',
+                'FET', 'AGIX', 'OCEAN', 'RNDR', 'TAO', 'WLD',
+                'IMX', 'GALA', 'SAND', 'MANA', 'AXS', 'ENJ', 'APE',
+                'SHIB', 'PEPE', 'FLOKI', 'BONK', 'WIF', 'BOME',
+                'DOGE', 'BABYDOGE', 'BRETT', 'TURBO'
             ];
             
             const streams = cryptos.map(c => `${c.toLowerCase()}usdt@miniTicker`).join('/');
@@ -323,27 +343,39 @@ const App = () => {
                         const existingAsset = prevAssets.find(a => a.symbol === symbol);
                         
                         if (existingAsset) {
+                            // Update asset yang ada dengan data realtime
                             return prevAssets.map(a => 
                                 a.symbol === symbol ? {
                                     ...a,
                                     price: currentPrice,
                                     pct: priceChangePercent,
+                                    // Volume dan High/Low di-update saat Polling/Awal
+                                    // atau menggunakan data 'ticker.q' (quoteVolume) jika ingin realtime volume
                                 } : a
                             );
-                        } else { return prevAssets; }
+                        } else {
+                            // Jika ada asset baru masuk, ini bisa dihandle, tapi kita fokus pada list yang sudah ada
+                            return prevAssets;
+                        }
                     });
                 };
-            } catch(e) { console.error("Watchlist WS Error:", e); }
+            } catch(e) {
+                console.error("Watchlist WS Error:", e);
+            }
             
             // Lakukan polling sesekali untuk sinkronisasi Volume/MCAP (setiap 5 menit)
             pollingInterval = setInterval(() => {
-                fetchWatchlist(); fetchMajorMarketSnapshot(); fetchGlobalNews();
-            }, 300000); 
+                fetchWatchlist(); // Ambil volume/MCAP
+                fetchMajorMarketSnapshot(); 
+                fetchGlobalNews();
+            }, 300000); // 5 menit
 
         } else {
             // LOGIC 6d: NON-CRYPTO POLLING (Delay 30 detik)
             pollingInterval = setInterval(() => {
-                fetchWatchlist(); fetchMajorMarketSnapshot(); fetchGlobalNews();
+                fetchWatchlist();
+                fetchMajorMarketSnapshot();
+                fetchGlobalNews();
             }, 30000); 
         }
 
@@ -356,8 +388,11 @@ const App = () => {
 
 
     // 7. EFFECT: FETCH DETAIL (Hybrid Data)
+    // ... (Logic tetap sama) ...
     useEffect(() => {
-        setFundamentalData(null); setAssetProfile(null); setNews([]);
+        setFundamentalData(null); 
+        setAssetProfile(null);
+        setNews([]);
         
         const loadHybridData = async () => {
             if (isCrypto) {
@@ -376,7 +411,8 @@ const App = () => {
     }, [selectedAsset, isCrypto]);
 
 
-    // 8. EFFECT: FETCH CANDLES & INDICATORS
+    // 8. EFFECT: FETCH CANDLES & INITIAL ORDER BOOK
+    // ... (Logic tetap sama) ...
     useEffect(() => {
         let isMounted = true;
         
@@ -384,44 +420,20 @@ const App = () => {
             setCandleData([]); 
             setLastCandle(null); 
             setOrderBook({ bids: [], asks: [] });
-            setRsiData([]); // Reset RSI Data
             
             try {
-                let fetchedCandleData = []; 
-                
+                let data = [];
                 if (isCrypto) {
-                    fetchedCandleData = await BinanceService.getKlines(selectedAsset + 'USDT', timeframe);
+                    data = await BinanceService.getKlines(selectedAsset + 'USDT', timeframe);
                 } else {
-                    fetchedCandleData = await FinnhubService.getStockCandles(selectedAsset, timeframe);
+                    data = await FinnhubService.getStockCandles(selectedAsset, timeframe);
                 }
                 
                 if (isMounted && activeAssetRef.current === selectedAsset) {
-                    
-                    if (fetchedCandleData.length > 0) {
-                        
-                        // 1. Set Candle Data
-                        setCandleData(fetchedCandleData);
-                        
-                        // 2. Set Last Candle
-                        const last = fetchedCandleData[fetchedCandleData.length - 1];
+                    if (data.length > 0) {
+                        setCandleData(data);
+                        const last = data[data.length - 1];
                         setLastCandle(last);
-                        
-                        // 3. Hitung RSI dan Set State rsiData
-                        const closes = fetchedCandleData.map(d => d.close).filter(c => c != null);
-                        
-                        if (closes.length >= 14) { 
-                            const rsiValues = RSI.calculate({ values: closes, period: 14 }); 
-                            
-                            // Map RSI values kembali ke format Lightweight Charts
-                            const formattedRsi = rsiValues.map((rsiVal, index) => ({
-                                // Sesuaikan timestamp RSI dengan candle yang sesuai
-                                time: fetchedCandleData[index + (14 - 1)].time, 
-                                value: rsiVal
-                            }));
-                            setRsiData(formattedRsi);
-                        } else {
-                            setRsiData([]);
-                        }
                         
                         if (!isCrypto) {
                             setOrderBook({
@@ -431,16 +443,9 @@ const App = () => {
                         }
                     } else {
                         setCandleData([]);
-                        setRsiData([]);
                     }
                 }
-            } catch (e) { 
-                console.error("Load Candle Error:", e); 
-                if (isMounted) {
-                    setCandleData([]);
-                    setRsiData([]);
-                }
-            }
+            } catch (e) { console.error("Load Candle Error:", e); }
         };
 
         loadCandles();
@@ -450,6 +455,7 @@ const App = () => {
 
 
     // 9. EFFECT: WEBSOCKET (Real-time SELECTED asset Chart/OrderBook)
+    // ... (Logic tetap sama) ...
     useEffect(() => {
         if (!isCrypto) {
         if (wsRef.current) wsRef.current.close();
@@ -460,7 +466,7 @@ const App = () => {
     const tfMap = { '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m', '1H': '1h', '2H': '2h', '4H': '4h', '1D': '1d', '1W': '1w', '1M': '1M' };
     const interval = tfMap[timeframe] || '1h';
     
-    // Gabungkan KLINE, miniTicker, dan Depth ke dalam satu WS
+    // *** MODIFIKASI INI ***: Gabungkan KLINE dan miniTicker ke dalam satu WS
     const url = `wss://stream.binance.com:9443/stream?streams=${targetSymbol}@kline_${interval}/${targetSymbol}@depth20@100ms/${targetSymbol}@miniTicker`;
 
     if (wsRef.current) wsRef.current.close();
@@ -469,66 +475,46 @@ const App = () => {
         const ws = new WebSocket(url);
         wsRef.current = ws;
         
+        // Simpan data kline terakhir untuk mengganti harga C (Close) secara realtime
         let latestKlineData = null; 
 
         ws.onmessage = (e) => {
             if (activeAssetRef.current !== selectedAsset) return;
             const msg = JSON.parse(e.data);
             
-            // A. KLINE UPDATE
+            // A. KLINE UPDATE (Mendapatkan data O, H, L dari Bar baru/aktif)
             if (msg.stream.includes('kline')) {
                 const k = msg.data.k;
                 latestKlineData = { 
-                    time: k.t / 1000, open: parseFloat(k.o), high: parseFloat(k.h),
-                    low: parseFloat(k.l), close: parseFloat(k.c), volume: parseFloat(k.v)
+                    time: k.t / 1000, 
+                    open: parseFloat(k.o), 
+                    high: parseFloat(k.h),
+                    low: parseFloat(k.l), 
+                    close: parseFloat(k.c),
+                    volume: parseFloat(k.v)
                 };
                 
+                // Jika bar sudah close (k.x = true), kita pakai harga aslinya
                 if (k.x === true) {
                     setLastCandle(latestKlineData);
                 }
             }
             
-            // B. MINI TICKER UPDATE (untuk harga realtime paling cepat)
+            // B. MINI TICKER UPDATE (Mendapatkan harga C terbaru - Paling Realtime)
             if (msg.stream.includes('miniTicker')) {
                 const ticker = msg.data;
                 const realtimePrice = parseFloat(ticker.c);
 
+                // Jika kita punya data kline yang sedang aktif (bar belum close)
                 if (latestKlineData) {
                     setLastCandle(prev => {
                         const newClose = realtimePrice;
                         const newHigh = Math.max(latestKlineData.high, newClose);
                         const newLow = Math.min(latestKlineData.low, newClose);
-
-                        // Trigger RSI re-calculation based on new close price
-                        setRsiData(prevRsi => {
-                            const currentCloses = candleData.map(c => c.close).filter(c => c != null);
-                            // Cek jika candleData sudah dimuat
-                            if (currentCloses.length === 0) return []; 
-
-                            // Update close price untuk candle terakhir (yang sedang aktif)
-                            currentCloses[currentCloses.length - 1] = newClose; 
-
-                            if (currentCloses.length >= 14) {
-                                const rsiValues = RSI.calculate({ values: currentCloses, period: 14 }); 
-                                
-                                // RSI data hanya perlu di-update satu nilai terakhir
-                                const lastRsiValue = rsiValues[rsiValues.length - 1];
-                                
-                                // Jika prevRsi kosong, kita ambil data penuh
-                                if (prevRsi.length === 0) return prevRsi;
-                                
-                                // Ganti nilai RSI terakhir
-                                return prevRsi.map((r, index) => 
-                                    index === prevRsi.length - 1 ? 
-                                    { ...r, value: lastRsiValue } : r
-                                );
-                            }
-                            return prevRsi;
-                        });
                         
                         return {
                             ...latestKlineData,
-                            close: newClose,
+                            close: newClose, // Paksa harga C menggunakan data realtime dari miniTicker
                             high: newHigh,
                             low: newLow
                         };
@@ -536,7 +522,7 @@ const App = () => {
                 }
             }
 
-            // C. ORDER BOOK
+            // C. ORDER BOOK (tetap sama)
             if (msg.stream.includes('depth')) {
                  setOrderBook({
                      bids: msg.data.bids.slice(0,15).map(b=>({price:parseFloat(b[0]), qty:parseFloat(b[1]), total:parseFloat(b[0])*parseFloat(b[1])})),
@@ -547,7 +533,7 @@ const App = () => {
     } catch(e) {}
     return () => { if (wsRef.current) wsRef.current.close(); };
 
-    }, [selectedAsset, timeframe, isCrypto, candleData]); // Tambahkan candleData agar RSI update
+    }, [selectedAsset, timeframe, isCrypto]);
 
     // 10. LOGIC: SCREENER RUNNER
     const runScreener = () => {
@@ -571,6 +557,7 @@ const App = () => {
 
 
     // 11. HELPER: STYLING UTILS
+    // Menggunakan helper yang sudah di hardcode (dari App.jsx sebelumnya)
     const getBgClass = (color) => `bg-[${color}]`;
     const getBorderClass = (color) => `border-[${color}]`;
     const getTextColor = (color) => `text-[${color}]`;
@@ -590,11 +577,12 @@ const App = () => {
             <div className="flex flex-1 overflow-hidden">
                 <Watchlist 
                     assets={assets} selectedAsset={selectedAsset}
-                    onSelect={(asset) => { setSelectedAsset(asset); }} // viewMode('chart') tidak lagi diperlukan
+                    onSelect={(asset) => { setSelectedAsset(asset); setViewMode('chart'); }}
                     searchQuery={searchQuery} setSearchQuery={setSearchQuery} loading={loading}
                     activeCategory={activeCategory}
                     setActiveCategory={(cat) => {
                         setActiveCategory(cat);
+                        // Reset selected asset when category changes
                         if (cat === MARKET_CATEGORIES.CRYPTO) setSelectedAsset('BTC');
                         else if (cat === MARKET_CATEGORIES.STOCKS) setSelectedAsset('AAPL');
                         else if (cat === MARKET_CATEGORIES.FOREX) setSelectedAsset('EURUSD=X');
@@ -604,24 +592,28 @@ const App = () => {
                 
                 <div className="flex-1 flex flex-col min-w-0" ref={mainContentRef}>
                     
-                    {/* AREA 1: CHART + MARKET STATS (Tanpa conditional viewMode) */}
+                    {/* AREA 1: CHART + MARKET STATS */}
                     <div 
                         className="flex-1 flex min-h-0 relative" 
                         style={{ height: `calc(100% - ${bottomPanelHeight}px)` }}
                     >
-                        <ChartWidget 
-                            selectedAsset={selectedAsset} timeframe={timeframe} setTimeframe={setTimeframe}
-                            candleData={candleData} lastCandle={lastCandle} priceData={realtimePriceStats} 
-                            rsiData={rsiData} // Prop baru untuk RSI Chart
-                        />
-                        
-                        {isCrypto && <OrderBook bids={orderBook.bids} asks={orderBook.asks} />}
-                        
-                        <MarketStats 
-                            selectedAsset={selectedAsset} priceStats={realtimePriceStats} 
-                            hybridStats={fundamentalData} profile={assetProfile} 
-                            isCrypto={isCrypto} news={news}
-                        />
+                        {viewMode === 'chart' ? (
+                            <>
+                                <ChartWidget 
+                                    selectedAsset={selectedAsset} timeframe={timeframe} setTimeframe={setTimeframe}
+                                    candleData={candleData} lastCandle={lastCandle} priceData={realtimePriceStats} 
+                                />
+                                {isCrypto && <OrderBook bids={orderBook.bids} asks={orderBook.asks} />}
+                                <MarketStats 
+                                    selectedAsset={selectedAsset} priceStats={realtimePriceStats} 
+                                    hybridStats={fundamentalData} profile={assetProfile} 
+                                    isCrypto={isCrypto} news={news}
+                                />
+                            </>
+                        ) : (
+                            // News Reader View
+                            <NewsReader news={selectedArticle} onClose={() => setViewMode('chart')} />
+                        )}
                     </div>
 
                     {/* --- DRAG HANDLE (Hardcoded Style) --- */}
@@ -659,13 +651,13 @@ const App = () => {
                         {/* Panel Content Area */}
                         <div className='flex-1 overflow-y-auto custom-scrollbar'>
                             {activePanel === 'screener' && <ScreenerPanel results={screenerResults} onScan={runScreener} scanning={scanning} />}
-                            {activePanel === 'news' && <NewsFeed news={globalNews} />} {/* onNewsClick dihapus */}
+                            {activePanel === 'news' && <NewsFeed news={globalNews} onNewsClick={(a) => { setSelectedArticle(a); setViewMode('news'); }} />}
                         </div>
                     </div>
                 </div>
             </div>
             
-            {/* Global CSS */}
+            {/* Global CSS (Marquee animation needs to stay here or in global CSS) */}
             <style>{`
                 .no-scrollbar::-webkit-scrollbar { display: none; } 
                 @keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
