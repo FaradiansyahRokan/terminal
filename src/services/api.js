@@ -1,40 +1,30 @@
 // src/services/api.js
 
 // --- 1. KONFIGURASI API ---
-// GANTI KE DATA-API (Lebih ramah untuk frontend/browser dan menghindari Error 418)
-const BINANCE_BASE_URL = 'https://data-api.binance.vision/api/v3'; 
+const BINANCE_BASE_URL = '/api/binance'; 
 const CRYPTOCOMPARE_BASE_URL = 'https://min-api.cryptocompare.com/data';
-const FINNHUB_BASE_URL = 'https://finnhub.io/api/v1';
-const YAHOO_SEARCH_URL = 'https://query2.finance.yahoo.com/v1/finance/search';
-// Yahoo sering memblokir request langsung, kita gunakan CORS Proxy jika perlu, 
-// atau biarkan fetch berjalan jika environment mendukung.
-const YAHOO_CHART_URL = 'https://query1.finance.yahoo.com/v8/finance/chart';
+const FINNHUB_BASE_URL = '/api/finnhub';
+const YAHOO_SEARCH_URL = '/api/yahoo-search';
+const YAHOO_CHART_URL = '/api/yahoo-chart';
 
-// API Key
+// API Key Finnhub
 const FINNHUB_KEY = 'd4vdnlhr01qs25evdo2gd4vdnlhr01qs25evdo30'; 
+
+// --- HELPER DELAY ---
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- 2. SERVICES ---
 
 export const BinanceService = {
     async getAllTickers() {
         try {
-            // Menggunakan data-api.binance.vision
             const response = await fetch(`${BINANCE_BASE_URL}/ticker/24hr`, {
-                method: 'GET',
-                headers: {
-                    'Accept': 'application/json',
-                }
+                headers: { 'Accept': 'application/json' }
             });
-            
-            if (!response.ok) {
-                // Log status error untuk debugging
-                console.warn(`Binance Ticker Failed: ${response.status} ${response.statusText}`);
-                throw new Error(`Binance fetch failed: ${response.status}`);
-            }
+            if (!response.ok) throw new Error(`Binance Status: ${response.status}`);
             return await response.json();
         } catch (error) { 
             console.error("Binance Ticker Error:", error);
-            // Return array kosong agar App tidak crash (white screen)
             return []; 
         }
     },
@@ -42,8 +32,6 @@ export const BinanceService = {
     async getKlines(symbol, interval) {
         try {
             const limitPerRequest = 1000; 
-            // Mapping interval agar sesuai dengan format Binance
-            // Pastikan interval valid: 1s, 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, 3d, 1w, 1M
             let reqInterval = interval;
             if (interval === '1H') reqInterval = '1h';
             else if (interval === '1D') reqInterval = '1d';
@@ -52,16 +40,10 @@ export const BinanceService = {
             else reqInterval = interval.toLowerCase();
 
             const url = `${BINANCE_BASE_URL}/klines?symbol=${symbol}&interval=${reqInterval}&limit=${limitPerRequest}`;
-            
             const response = await fetch(url);
-            if (!response.ok) {
-                console.warn(`Binance Kline Failed: ${response.status}`);
-                throw new Error(`Binance Kline Failed: ${response.status}`);
-            }
+            if (!response.ok) throw new Error(`Binance Kline Failed: ${response.status}`);
             
             const data = await response.json();
-            
-            // Validasi apakah data array
             if (!Array.isArray(data)) return [];
 
             return data.map(d => ({
@@ -71,18 +53,15 @@ export const BinanceService = {
                 low: parseFloat(d[3]),
                 close: parseFloat(d[4]),
                 volume: parseFloat(d[5]),
-            })).filter(c => c.open != null); // Filter data corrupt
-        } catch (error) { 
-            console.error("Binance Klines Error:", error);
-            return [];
-        }
+            })).filter(c => c.open != null);
+        } catch (error) { return []; }
     }
 };
 
 export const CryptoCompareService = {
     async getAssetStats(symbol) {
         try {
-            const sym = symbol.toUpperCase();
+            const sym = symbol.toUpperCase().replace('USDT', '');
             const response = await fetch(`${CRYPTOCOMPARE_BASE_URL}/pricemultifull?fsyms=${sym}&tsyms=USD`);
             if (!response.ok) return null;
             const data = await response.json();
@@ -102,10 +81,45 @@ export const CryptoCompareService = {
 };
 
 export const YahooService = {
+    // 🔥 NEW: Fungsi Khusus ambil Quote dari Chart Yahoo
+    // Ini menggantikan peran Finnhub Quote
+    async getQuote(symbol) {
+        try {
+            // Delay random kecil supaya Yahoo gak curiga bot spamming
+            await delay(Math.random() * 200);
+
+            // Kita ambil candle Harian (1D) range 5 hari ke belakang
+            const candles = await this.getYahooCandles(symbol, '1D');
+            
+            if (candles && candles.length > 1) {
+                const last = candles[candles.length - 1]; // Hari ini (atau candle terakhir)
+                const prev = candles[candles.length - 2]; // Kemarin
+                
+                // Hitung perubahan harga manual
+                const change = last.close - prev.close;
+                const pct = (prev.close > 0) ? (change / prev.close) * 100 : 0;
+
+                return {
+                    price: last.close, 
+                    change: change, 
+                    pct: pct, 
+                    high: last.high, 
+                    low: last.low, 
+                    open: last.open, 
+                    prevClose: prev.close, 
+                    vol: last.volume 
+                };
+            }
+        } catch (err) {
+            // Silent error
+        }
+        // Return object nol jika gagal
+        return { price: 0, change: 0, pct: 0, high: 0, low: 0, open: 0, prevClose: 0, vol: 0 };
+    },
+
     async getAssetNews(symbol, isCrypto) {
         try {
             let yahooSymbol = symbol;
-            
             if (isCrypto) {
                  if (!symbol.includes('-USD')) yahooSymbol = `${symbol}-USD`;
             } else if (symbol.includes('=X') || symbol.includes('^')) {
@@ -114,33 +128,26 @@ export const YahooService = {
                  yahooSymbol = symbol.replace('^', '');
             }
 
-            // Yahoo Finance Search API kadang memblokir akses tanpa cookie valid
-            // Kita coba fetch, tapi handle error dengan graceful
             const response = await fetch(`${YAHOO_SEARCH_URL}?q=${yahooSymbol}`);
             if (!response.ok) throw new Error("Yahoo Search Failed");
-            
             const data = await response.json();
 
             if (data.news && data.news.length > 0) {
                 return data.news.map(item => {
                     if(!item.title) return null;
-
                     return {
                         id: item.uuid,
                         datetime: item.providerPublishTime,
                         headline: item.title,
                         source: item.publisher,
                         url: item.link,
-                        summary: `Latest coverage for ${symbol} from ${item.publisher}. Click to read more.`, 
+                        summary: `Latest coverage for ${symbol} from ${item.publisher}.`, 
                         image: item.thumbnail?.resolutions?.[0]?.url || null 
                     };
                 }).filter(item => item !== null);
             }
             return [];
-        } catch (e) { 
-            console.warn("Yahoo News Error:", e);
-            return []; 
-        }
+        } catch (e) { return []; }
     },
     
     async getYahooCandles(symbol, resolution) {
@@ -153,158 +160,79 @@ export const YahooService = {
             
             const interval = yahooMap[resolution] || '1d';
             
-            let range = '1y'; 
-            if (resolution === '1M' || resolution === '1W') {
-                range = '5y'; 
-            } else if (resolution.includes('m') || resolution === '1H' || resolution === '4H') {
-                 range = (resolution === '1H' || resolution === '4H') ? '1mo' : '5d'; 
+            // --- 🔥 LOGIC RANGE BARU (FULL HISTORY) 🔥 ---
+            let range = '1y'; // Default
+
+            // 1. Jika Intraday (Menit/Jam), Yahoo membatasi history
+            if (['1m', '5m', '15m', '30m'].includes(resolution)) {
+                range = '7d'; // Data 1 menit cuma dikasih 7 hari ke belakang
+            } else if (['1H', '4H'].includes(resolution)) {
+                range = '730d'; // Data jam-jaman maks sekitar 2 tahun (730 hari)
+            } 
+            // 2. Jika Daily, Weekly, Monthly -> AMBIL SEMUA DARI AWAL LISTING
+            else {
+                range = 'max'; // 🔥 KUNCI: 'max' mengambil data dari awal IPO sampai sekarang
             }
 
-            // 🔥 FIX: AUTO CONVERT SYMBOL FOR YAHOO 🔥
+            // Symbol Formatting
             let targetSymbol = symbol;
-            
-            // 1. Ubah BTCUSDT -> BTC-USD (Format Yahoo)
-            if (targetSymbol.endsWith('USDT')) {
-                targetSymbol = targetSymbol.replace('USDT', '-USD');
-            }
-            
-            // 2. Forex (EURUSD -> EURUSD=X) - Cek jika 6 huruf kapital tanpa karakter aneh
-            if (targetSymbol.length === 6 && !targetSymbol.includes('=X') && !targetSymbol.includes('-') && !targetSymbol.includes('^')) {
-                 targetSymbol = targetSymbol + '=X';
-            }
+            if (targetSymbol.endsWith('USDT')) targetSymbol = targetSymbol.replace('USDT', '-USD');
+            if (targetSymbol.length === 6 && !/[^A-Z]/.test(targetSymbol)) targetSymbol = targetSymbol + '=X';
 
-            // NOTE: Yahoo Finance API v8 sering memblokir request CORS dari localhost.
-            // Solusi terbaik sebenarnya pakai Proxy, tapi untuk demo kita try/catch.
-            const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${targetSymbol}?interval=${interval}&range=${range}`;
+            // Request ke Proxy URL
+            const yahooUrl = `${YAHOO_CHART_URL}/${targetSymbol}?interval=${interval}&range=${range}`;
             
             const response = await fetch(yahooUrl);
             
             if (!response.ok) {
-                // Jangan throw Error generik, return array kosong biar App gak crash
-                console.warn(`Yahoo Fetch 404/Error for ${targetSymbol}`);
+                console.warn(`Yahoo Fetch Error for ${targetSymbol}`);
                 return []; 
             }
             
             const json = await response.json();
             const result = json.chart.result?.[0];
             
-            if (!result || !result.timestamp) return [];
+            if (!result || !result.timestamp || !result.indicators.quote[0]) return [];
 
-            const timestamps = result.timestamp;
-            const quotes = result.indicators.quote[0];
+            const { timestamp } = result;
+            const { open, high, low, close, volume } = result.indicators.quote[0];
 
-            return timestamps.map((t, i) => ({
+            return timestamp.map((t, i) => ({
                 time: t,
-                open: quotes.open[i],
-                high: quotes.high[i],
-                low: quotes.low[i],
-                close: quotes.close[i],
-                volume: quotes.volume[i] || 0
+                open: open[i],
+                high: high[i],
+                low: low[i],
+                close: close[i],
+                volume: volume[i] || 0
             })).filter(c => c.open != null && c.close != null);
 
         } catch (e) {
-             console.warn("Yahoo Candles Error (Silent):", e.message); // Ubah jadi warn agar console tidak merah
+             console.warn("Yahoo Candles Error (Silent):", e.message);
              return [];
         }
     }
 };
 
-
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-// --- 5. FINNHUB SERVICE (DENGAN RATE LIMIT HANDLING) ---
 export const FinnhubService = {
-    // --- 1. Get Quote ---
+    // --- 1. Get Quote (MODIFIED: Use Yahoo ONLY) ---
     async getQuote(symbol) {
-        // Fallback untuk Forex/Index yang diblokir oleh Finnhub
-        if (symbol.includes('=X') || symbol.includes('^')) {
-            return this.getYahooQuote(symbol);
-        }
-
-        try {
-            // Tambahkan delay acak kecil untuk menghindari burst request bersamaan
-            await delay(Math.random() * 500); 
-
-            const response = await fetch(`${FINNHUB_BASE_URL}/quote?symbol=${symbol}&token=${FINNHUB_KEY}`);
-            
-            if (!response.ok) {
-                if (response.status === 429) {
-                    console.warn(`Finnhub Quote Limit (429) for ${symbol}. Switching to Yahoo.`);
-                    // Jika limit habis, langsung fallback ke Yahoo tanpa throw error
-                    return this.getYahooQuote(symbol);
-                }
-                throw new Error("Finnhub Error");
-            }
-            
-            const data = await response.json();
-
-            // Validasi data (c = current price harus > 0)
-            if (data.c && data.c > 0) {
-                return {
-                    price: data.c,
-                    change: data.d,
-                    pct: data.dp,
-                    high: data.h,
-                    low: data.l,
-                    open: data.o,
-                    prevClose: data.pc
-                };
-            }
-            throw new Error("Zero Data");
-        } catch (e) { 
-            // Fallback ke Yahoo jika ada error apapun
-            return this.getYahooQuote(symbol);
-        }
+        // 🔥 DIRECT KE YAHOO. Finnhub di-skip total untuk Quote harga.
+        // Ini mengatasi masalah Rate Limit 429 saat fetch banyak saham.
+        return YahooService.getQuote(symbol);
     },
 
-    // --- HELPER: AMBIL QUOTE DARI YAHOO ---
-    async getYahooQuote(symbol) {
-        try {
-            // Gunakan delay sedikit lebih lama untuk Yahoo agar tidak kena blokir juga
-            await delay(Math.random() * 1000);
-
-            const candles = await YahooService.getYahooCandles(symbol, '1D');
-            
-            if (candles && candles.length > 1) {
-                const last = candles[candles.length - 1]; 
-                const prev = candles[candles.length - 2]; 
-                
-                const change = last.close - prev.close;
-                const pct = (prev.close > 0) ? (change / prev.close) * 100 : 0;
-
-                return {
-                    price: last.close, 
-                    change: change, 
-                    pct: pct, 
-                    high: last.high,
-                    low: last.low,
-                    open: last.open,
-                    prevClose: prev.close,
-                    vol: last.volume 
-                };
-            }
-        } catch (err) {
-             // console.warn(`Yahoo Fallback Quote Failed for ${symbol}`); // Silent fail agar console bersih
-        }
-        return { price: 0, change: 0, pct: 0, high: 0, low: 0, open: 0, prevClose: 0, vol: 0 };
-    },
-
-    // --- 2. Get Candles (HISTORY/CHART) ---
+    // --- 2. Get Candles ---
     async getStockCandles(symbol, resolution) {
+        // Langsung tembak Yahoo karena Finnhub free tier candle-nya terbatas
         return YahooService.getYahooCandles(symbol, resolution);
     },
 
-    // --- 3. Market Status ---
-    async getMarketStatus() {
-        return { isOpen: true, session: "regular", exchange: "US", timezone: "America/New_York" };
-    },
-
-    // --- 4. Profile ---
+    // --- 3. Profile (Masih pake Finnhub - jarang dipanggil, jadi aman) ---
     async getProfile(symbol, isCrypto) {
         if (isCrypto) {
             return {
                 name: symbol,
-                logo: `https://assets.coincap.io/assets/icons/${symbol.toLowerCase()}@2x.png`,
+                logo: `https://assets.coincap.io/assets/icons/${symbol.toLowerCase().replace('usdt','')}@2x.png`,
                 weburl: 'https://binance.com',
                 description: `Crypto asset ${symbol}`
             };
@@ -312,47 +240,35 @@ export const FinnhubService = {
         try {
             const cleanSymbol = symbol.replace('=X', '');
             const response = await fetch(`${FINNHUB_BASE_URL}/stock/profile2?symbol=${cleanSymbol}&token=${FINNHUB_KEY}`);
-            if (response.status === 429) console.warn("Finnhub Profile: Rate Limit Reached (429).");
             if(response.ok) return await response.json();
         } catch(e) {}
         
         return {
-            name: symbol.replace('=X', '').replace('^', ''),
-            logo: `https://ui-avatars.com/api/?name=${symbol.replace('=X', '').replace('^', '')}&background=random`,
+            name: symbol.replace(/=X|\^/g, ''),
+            logo: `https://ui-avatars.com/api/?name=${symbol}&background=random`,
             weburl: '#',
             description: `Market data for ${symbol}`
         };
     },
 
-    // --- 5. News ---
+    // --- 4. Asset News (Pake Yahoo karena lebih update per saham) ---
     async getNews(symbol, isCrypto) {
         return YahooService.getAssetNews(symbol, isCrypto);
     },
 
-    // --- 6. Global News ---
+    // --- 5. Global News (TETAP PAKE FINNHUB - Sesuai request) ---
     async getGeneralNews(category = 'general') {
         try {
             const response = await fetch(`${FINNHUB_BASE_URL}/news?category=${category}&token=${FINNHUB_KEY}`);
-            if (response.status === 429) {
-                console.warn(`Finnhub General News (${category}): Rate Limit Reached (429).`);
-                return [];
-            }
+            // Kalau limit abis, return kosong aja jangan error
+            if (response.status === 429) return []; 
             if (!response.ok) throw new Error("Finnhub General News Failed");
             
             const data = await response.json();
-
             return data.map(item => ({
-                id: item.id,
-                datetime: item.datetime,
-                headline: item.headline,
-                source: item.source,
-                url: item.url,
-                summary: item.summary,
-                image: item.image
+                id: item.id, datetime: item.datetime, headline: item.headline,
+                source: item.source, url: item.url, summary: item.summary, image: item.image
             }));
-        } catch (e) {
-            console.warn(`Finnhub General News (${category}) Error:`, e);
-            return [];
-        }
+        } catch (e) { return []; }
     }
 };

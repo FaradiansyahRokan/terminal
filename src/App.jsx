@@ -31,7 +31,7 @@ const App = () => {
     const [selectedAsset, setSelectedAsset] = useState('BTC');
     const [timeframe, setTimeframe] = useState('1H');
     const [searchQuery, setSearchQuery] = useState('');
-    const [activePanel, setActivePanel] = useState('screener');
+    const [activePanel, setActivePanel] = useState('news');
     const [viewMode, setViewMode] = useState('chart');
     const [selectedArticle, setSelectedArticle] = useState(null); 
     
@@ -495,19 +495,23 @@ const App = () => {
                     />
                     
                     <div className={`border-t ${BORDER_COLOR} flex flex-col`} style={{ height: `${bottomPanelHeight}px`, flexShrink: 0 }}>
-                        <div className={`flex border-b ${BORDER_COLOR} ${BG_DARK}`}>
-                            {['screener', 'news'].map(tab => (
-                                <button key={tab} onClick={() => setActivePanel(tab)} 
-                                    className={`px-4 py-2 text-[10px] font-bold border-r ${BORDER_COLOR} ${activePanel===tab ? `${ACCENT_TEXT} bg-[#1E1E1E]` : ''}`}>
-                                    {tab.toUpperCase()}
-                                </button>
-                            ))}
-                        </div>
-                        <div className='flex-1 overflow-y-auto custom-scrollbar'>
-                            {activePanel === 'screener' && <ScreenerPanel results={screenerResults} onScan={()=>{}} scanning={scanning} />}
-                            {activePanel === 'news' && <NewsFeed news={globalNews} onNewsClick={(a) => { setSelectedArticle(a); setViewMode('news'); }} />}
-                        </div>
-                    </div>
+    <div className={`flex border-b ${BORDER_COLOR} ${BG_DARK}`}>
+        {/* HANYA RENDER TOMBOL 'NEWS' */}
+        {['news'].map(tab => ( 
+            <button 
+                key={tab} 
+                onClick={() => setActivePanel(tab)} 
+                className={`px-4 py-2 text-[10px] font-bold border-r ${BORDER_COLOR} ${activePanel===tab ? `${ACCENT_TEXT} bg-[#1E1E1E]` : ''}`}
+            >
+                {tab.toUpperCase()}
+            </button>
+        ))}
+    </div>
+    <div className='flex-1 overflow-y-auto custom-scrollbar'>
+        {/* Konten Screener dihilangkan, hanya menyisakan NewsFeed */}
+        {activePanel === 'news' && <NewsFeed news={globalNews} onNewsClick={(a) => { setSelectedArticle(a); setViewMode('news'); }} />}
+    </div>
+</div>
                 </div>
             </div>
             
