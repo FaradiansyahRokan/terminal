@@ -1,6 +1,7 @@
 export default async function handler(req, res) {
-  const requestUrl = req.url;
-  const path = requestUrl.replace('/api/binance', '');
+  // Ambil path setelah /api/binance
+  // Contoh req.url: /api/binance/klines?symbol=BTC...
+  const path = req.url.replace(/^\/api\/binance/, '');
   const targetUrl = `https://data-api.binance.vision/api/v3${path}`;
 
   try {
@@ -9,6 +10,6 @@ export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.status(200).json(data);
   } catch (error) {
-    res.status(500).json({ error: 'Binance Proxy Error' });
+    res.status(500).json({ error: 'Binance Proxy Failed' });
   }
 }
