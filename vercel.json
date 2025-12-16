@@ -1,0 +1,20 @@
+{
+  "rewrites": [
+    { 
+      "source": "/api/binance/:path*", 
+      "destination": "/api/binance.js" 
+    },
+    { 
+      "source": "/api/finnhub/:path*", 
+      "destination": "/api/finnhub.js" 
+    },
+    { 
+      "source": "/api/yahoo-chart", 
+      "destination": "/api/yahoo-chart.js" 
+    },
+    { 
+      "source": "/api/yahoo-search", 
+      "destination": "/api/yahoo-search.js" 
+    }
+  ]
+}
