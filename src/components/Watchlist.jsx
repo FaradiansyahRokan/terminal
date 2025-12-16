@@ -1,81 +1,76 @@
-import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { Search, RefreshCw } from 'lucide-react'; // Menghapus TrendingUp yang tidak digunakan
-import { formatNumber, formatCompact, MARKET_CATEGORIES } from '../utils/constants'; 
-// THEME diimpor di sini, tetapi kita tetap menggunakan hardcode di dalam function
+// src/components/Watchlist.jsx
 
-const Watchlist = ({ 
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { Search, RefreshCw } from 'lucide-react'; 
+import { formatNumber, formatCompact, MARKET_CATEGORIES } from '../utils/constants'; 
+
+// Gunakan React.memo untuk mencegah re-render yang tidak perlu dari parent
+const Watchlist = React.memo(({ 
     assets, selectedAsset, onSelect, 
     searchQuery, setSearchQuery, loading, 
     activeCategory, setActiveCategory 
 }) => {
     
-    // 1. STATE & REF UNTUK FLASH EFFECT
+    // --- STATE & REF UNTUK FLASH EFFECT ---
     const [flashSymbol, setFlashSymbol] = useState(null);
-    const priceHistoryRef = useRef({}); // Menyimpan harga terakhir untuk deteksi perubahan
+    const priceHistoryRef = useRef({}); 
     
-    // 2. DATA FILTERING
+    // --- DATA FILTERING ---
     const filteredAssets = useMemo(() => {
-        if (!searchQuery) return assets;
-        return assets.filter(a => a.symbol.toLowerCase().includes(searchQuery.toLowerCase()));
-    }, [assets, searchQuery]);
+        const query = searchQuery.toLowerCase();
+        
+        // Sorting: Kita sort berdasarkan PCT Change Descending biar yang gerak kencang di atas
+        return assets
+            .filter(a => 
+                (activeCategory === MARKET_CATEGORIES.ALL || a.category === activeCategory) && 
+                a.symbol.toLowerCase().includes(query)
+            )
+            .sort((a, b) => (b.pct || 0) - (a.pct || 0)); 
+    }, [assets, searchQuery, activeCategory]);
 
-    // 3. EFFECT: MENDETEKSI PERUBAHAN HARGA DAN MEMICU FLASH
+    // --- EFFECT: DETEKSI PERUBAHAN HARGA ---
     useEffect(() => {
         const newHistory = { ...priceHistoryRef.current };
+        let timer;
         
         assets.forEach(asset => {
             const currentPrice = asset.price;
             const symbol = asset.symbol;
             const oldPrice = newHistory[symbol];
 
-            if (oldPrice !== undefined && oldPrice !== currentPrice) {
-                // Harga berubah, picu flash!
+            // Toleransi kecil untuk float comparison
+            if (oldPrice !== undefined && Math.abs(currentPrice - oldPrice) > 1e-8) {
                 setFlashSymbol({ 
                     symbol: symbol, 
                     isUp: currentPrice > oldPrice 
                 });
                 
-                // Hapus flash setelah 500ms
-                setTimeout(() => setFlashSymbol(null), 500);
+                // Clear flash lebih cepat (300ms) agar terasa snappy
+                if(timer) clearTimeout(timer);
+                timer = setTimeout(() => setFlashSymbol(null), 300);
             }
-            // Update history untuk iterasi berikutnya
             newHistory[symbol] = currentPrice;
         });
 
         priceHistoryRef.current = newHistory;
-        
-        // Catatan: Efek ini hanya merespons perubahan array 'assets' (yaitu polling), bukan websocket.
-        // Untuk Watchlist non-selected asset, ini adalah solusi terbaik.
-
+        return () => clearTimeout(timer); 
     }, [assets]);
 
-
-    // --- HARDCODED COLORS UNTUK STABILITAS ---
-    // Warna Sinyal
-    const getPriceTextClass = (positive) => positive ? 'text-green-400' : 'text-red-500'; 
-    const getChgBgClass = (positive) => positive ? 'bg-green-500/10' : 'bg-red-500/10';
-    
-    // Warna Flash
-    const FLASH_UP_BG = 'bg-green-700/50';
-    const FLASH_DOWN_BG = 'bg-red-700/50';
-
-    // Layout Colors
-    const ACCENT_COLOR = 'text-amber-500';
+    // --- STYLES ---
     const BG_PANEL = 'bg-[#1E1E1E]'; 
     const BG_DARK = 'bg-[#0D0D0D]'; 
     const BORDER_COLOR = 'border-[#333333]'; 
 
-
     return (
-        <div className={`w-[320px] h-full flex flex-col ${BG_PANEL} border-r ${BORDER_COLOR}`}>
+        <div className={`w-[320px] h-full flex flex-col ${BG_PANEL} border-r ${BORDER_COLOR} text-white`}>
             
-            {/* --- TAB KATEGORI (FONT: 10px) --- */}
+            {/* CATEGORY TABS */}
             <div className={`flex overflow-x-auto no-scrollbar border-b ${BORDER_COLOR} ${BG_DARK}`}>
                 {Object.values(MARKET_CATEGORIES).map(cat => (
                     <button
                         key={cat}
                         onClick={() => setActiveCategory(cat)}
-                        className={`flex-1 py-2.5 text-[10px] font-bold text-center border-b-2 transition-colors ${
+                        className={`min-w-fit px-3 py-2.5 text-[10px] font-bold text-center border-b-2 transition-colors ${
                             activeCategory === cat 
                             ? `border-amber-500 text-amber-500 bg-amber-900/10`
                             : 'border-transparent text-gray-500 hover:text-gray-300'
@@ -86,7 +81,7 @@ const Watchlist = ({
                 ))}
             </div>
 
-            {/* SEARCH BAR */}
+            {/* SEARCH */}
             <div className={`p-2 border-b ${BORDER_COLOR}`}>
                 <div className="relative">
                     <Search className={`absolute left-2 top-2 w-3 h-3 text-gray-600`} />
@@ -95,14 +90,13 @@ const Watchlist = ({
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         placeholder={`SEARCH ${activeCategory}...`} 
-                        className={`w-full ${BG_DARK} border ${BORDER_COLOR} text-[10px] py-1.5 pl-7 pr-2 focus:border-amber-500 outline-none font-mono`}
+                        className={`w-full ${BG_DARK} border ${BORDER_COLOR} text-[10px] py-1.5 pl-7 pr-7 focus:border-amber-500 outline-none font-mono placeholder-gray-600`}
                     />
-                    {/* Refresh Icon hanya muncul saat loading (dari prop) */}
-                    {loading && <RefreshCw className={`absolute right-2 top-2 w-3 h-3 ${ACCENT_COLOR} animate-spin`} />}
+                    {loading && <RefreshCw className={`absolute right-2 top-2 w-3 h-3 text-amber-500 animate-spin`} />}
                 </div>
             </div>
 
-            {/* KOLOM HEADER (FONT: 10px) */}
+            {/* HEADER COLUMNS */}
             <div className={`grid grid-cols-12 px-3 py-1 ${BG_DARK} text-[10px] font-bold text-gray-500 border-b ${BORDER_COLOR}`}>
                 <div className="col-span-5">SYMBOL</div>
                 <div className="col-span-3 text-right">PRICE</div>
@@ -110,93 +104,72 @@ const Watchlist = ({
                 <div className="col-span-2 text-right">VOL</div>
             </div>
 
-            {/* LIST ASSET */}
+            {/* LIST */}
             <div className="flex-1 overflow-y-auto custom-scrollbar">
                 {filteredAssets.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-40 text-gray-600">
-                        <span className="text-[10px]">No Data Available</span>
+                        <span className="text-[10px]">{loading ? 'Loading Assets...' : 'No Data'}</span>
                     </div>
                 ) : (
-                    filteredAssets.map((asset, i) => {
-                        const isPositive = asset.pct >= 0;
-                        const priceTextColor = getPriceTextClass(isPositive);
-                        const chgBg = getChgBgClass(isPositive);
+                    filteredAssets.map((asset) => {
+                        const pctValue = asset.pct || 0;
+                        const isPositive = pctValue >= 0;
+                        const colorClass = isPositive ? 'text-green-400' : 'text-red-500';
+                        const bgClass = isPositive ? 'bg-green-500/10' : 'bg-red-500/10';
 
-                        // LOGIC FLASH EFFECT
+                        // Flash logic per row
                         const isFlashing = flashSymbol && flashSymbol.symbol === asset.symbol;
-                        const flashClass = isFlashing ? (flashSymbol.isUp ? FLASH_UP_BG : FLASH_DOWN_BG) + ' transition-none' : '';
+                        const flashBg = isFlashing 
+                            ? (flashSymbol.isUp ? 'bg-green-700/40' : 'bg-red-700/40') 
+                            : '';
 
                         return (
                         <div
-                            key={i}
+                            key={asset.symbol}
                             onClick={() => onSelect(asset.symbol)}
-                            className={`grid grid-cols-12 px-3 py-1.5 border-b ${BORDER_COLOR} cursor-pointer relative group transition-colors duration-500 ${ // Durasi transisi kembali ke normal
-                            selectedAsset === asset.symbol 
-                                ? `${BG_DARK} ${flashClass}` 
-                                : `hover:${BG_DARK} ${flashClass}`
-                            }`}
+                            className={`grid grid-cols-12 px-3 py-1.5 border-b ${BORDER_COLOR} cursor-pointer relative group transition-colors duration-300 ${ 
+                                selectedAsset === asset.symbol ? BG_DARK : `hover:${BG_DARK}`
+                            } ${flashBg}`}
                         >
-                            {/* Selected Indicator Bar */}
                             {selectedAsset === asset.symbol && (
-                            <div className={`absolute left-0 top-0 bottom-0 w-[2px] bg-amber-500 shadow-[0_0_8px_#F59E0B]`}></div>
+                                <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-amber-500 shadow-[0_0_8px_#F59E0B]"></div>
                             )}
                             
+                            {/* Symbol */}
                             <div className="col-span-5 flex items-center gap-1.5">
-                            {/* SYMBOL - text-[11px] */}
-                            <span className={`text-[11px] font-bold ${selectedAsset === asset.symbol ? 'text-white' : ACCENT_COLOR} group-hover:text-white`}>
-                                {asset.symbol.replace('=X', '').replace('USDT', '')}
-                            </span>
+                                <span className={`text-[11px] font-bold ${selectedAsset === asset.symbol ? 'text-white' : 'text-amber-500'} group-hover:text-white`}>
+                                    {asset.symbol.replace('=X', '').replace('USDT', '')}
+                                </span>
                             </div>
 
-                            {/* Harga (Price) - Flash Class Applied here */}
-                            <div className={`col-span-3 text-right font-mono text-[11px] text-white ${isFlashing ? priceTextColor : ''}`}> 
+                            {/* Price */}
+                            <div className={`col-span-3 text-right font-mono text-[11px] text-white ${isFlashing ? colorClass : ''}`}> 
                                 {asset.price < 1 ? asset.price.toFixed(5) : formatNumber(asset.price, 2)}
                             </div>
 
-                            {/* Change Percentage - text-[10px] */}
+                            {/* Change */}
                             <div className="col-span-2 text-right font-mono text-[10px]">
-                            <span className={`px-1 py-0.5 ${chgBg} ${priceTextColor}`}>
-                                {isPositive ? '+' : ''}{asset.pct ? asset.pct.toFixed(2) : '0.00'}%
-                            </span>
+                                <span className={`px-1 py-0.5 ${bgClass} ${colorClass}`}>
+                                    {isPositive ? '+' : ''}{pctValue.toFixed(2)}%
+                                </span>
                             </div>
 
-                            {/* Volume - text-white */}
-                            <div className="col-span-2 text-right font-mono text-[10px] text-white">
-                            {formatCompact(asset.vol)}
+                            {/* Vol */}
+                            <div className="col-span-2 text-right font-mono text-[10px] text-gray-400">
+                                {formatCompact(asset.vol)}
                             </div>
                         </div>
                         );
                     })
                 )}
             </div>
-
-            {/* FOOTER STATS */}
-            <div className={`border-t ${BORDER_COLOR} ${BG_PANEL} p-2`}>
-                <div className="grid grid-cols-3 gap-2 text-[8px]">
-                    <div className={`${BG_DARK} p-1.5 border ${BORDER_COLOR}`}>
-                        <div className="text-gray-600">ASSETS</div>
-                        <div className={`text-[11px] font-bold text-white`}>{assets.length}</div>
-                    </div>
-                    <div className={`${BG_DARK} p-1.5 border ${BORDER_COLOR}`}>
-                        <div className="text-gray-600">GAINERS</div>
-                        <div className={`text-[11px] text-green-400 font-bold`}>{assets.filter(a => a.pct > 0).length}</div>
-                    </div>
-                    <div className={`${BG_DARK} p-1.5 border ${BORDER_COLOR}`}>
-                        <div className="text-gray-600">LOSERS</div>
-                        <div className={`text-[11px] text-red-500 font-bold`}>{assets.filter(a => a.pct < 0).length}</div>
-                    </div>
-                </div>
-            </div>
             
-            {/* SCROLLBAR STYLING (Hardcoded) */}
-            <style>{`
-                .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-                .custom-scrollbar::-webkit-scrollbar-track { background: #1E1E1E; }
-                .custom-scrollbar::-webkit-scrollbar-thumb { background: #333333; }
-                .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #FFB800; }
-            `}</style>
+            {/* FOOTER */}
+            <div className={`border-t ${BORDER_COLOR} ${BG_PANEL} p-2 text-[10px] text-gray-500 text-center`}>
+                {activeCategory === MARKET_CATEGORIES.CRYPTO ? 'Realtime WebSocket' : 'Delayed Data (2m Polling)'}
+            </div>
         </div>
     );
-};
+});
 
 export default Watchlist;
