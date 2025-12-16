@@ -141,42 +141,46 @@ export const YahooService = {
     },
     
     // --- CORE CHART ENGINE ---
-    async getYahooCandles(symbol, resolution, overrideRange = null) {
+    async getYahooCandles(symbol, resolution, customRange = null) {
         try {
             const yahooMap = {
                 '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m',
                 '1H': '60m', '4H': '60m', 
                 '1D': '1d', '1W': '1wk', '1M': '1mo'
             };
+            
             const interval = yahooMap[resolution] || '1d';
             
-            let range = overrideRange || '1y';
-            if (!overrideRange) {
-                if (resolution === '1D') range = '1d';
-                else if (resolution === '1W') range = '5d';
-                else if (resolution === '1M') range = '1mo';
-                else if (resolution === '6M') range = '6mo';
-                else if (['1Y', '5Y', 'MAX'].includes(resolution)) range = resolution === 'MAX' ? 'max' : resolution.toLowerCase();
-                else if (['1m', '5m', '15m'].includes(resolution)) range = '7d'; 
+            // Logic Range
+            let range = customRange || '1y'; 
+            if (!customRange) {
+                if (['1m', '5m', '15m', '30m'].includes(resolution)) range = '7d';
                 else if (['1H', '4H'].includes(resolution)) range = '730d'; 
+                else if (['1D', '1W', '1M'].includes(resolution) && !symbol.includes('USDT')) range = 'max';
+                else if (resolution === 'MAX') range = 'max';
             }
 
-            const targetSymbol = formatSymbolForYahoo(symbol);
-            
-            // Construct URL
-            // Encode symbol explicitly to handle ^GSPC etc correctly in proxy path
+            // Symbol Formatting
+            let targetSymbol = symbol;
+            if (targetSymbol.endsWith('USDT')) targetSymbol = targetSymbol.replace('USDT', '-USD');
+            if (targetSymbol.length === 6 && !/[^A-Z]/.test(targetSymbol)) targetSymbol = targetSymbol + '=X';
+
+            // 🔥 PERUBAHAN UTAMA DI SINI 🔥
+            // Ubah format URL dari Path Parameter menjadi Query Parameter
+            //encodeURIComponent penting agar karakter ^ dan = aman dikirim
             const encodedSymbol = encodeURIComponent(targetSymbol);
-            const url = `${CONFIG.YAHOO_CHART_URL}/${encodedSymbol}?interval=${interval}&range=${range}`;
+            
+            const url = `${YAHOO_CHART_URL}?symbol=${encodedSymbol}&interval=${interval}&range=${range}`;
             
             const response = await fetch(url);
             
             if (!response.ok) {
-                // If 404 on a short range, the fallback logic in getQuote will try a longer range
+                // Log silent warning
                 return []; 
             }
             
             const json = await response.json();
-            const result = json.chart.result?.[0];
+            const result = json.chart?.result?.[0]; // Safe navigation (?.)
             
             if (!result || !result.timestamp || !result.indicators.quote[0]) return [];
 
@@ -185,9 +189,12 @@ export const YahooService = {
 
             return timestamp.map((t, i) => ({
                 time: t,
-                open: open[i], high: high[i], low: low[i], close: close[i], 
+                open: open[i],
+                high: high[i],
+                low: low[i],
+                close: close[i],
                 volume: volume[i] || 0
-            })).filter(c => c.close != null && c.open != null);
+            })).filter(c => c.open != null && c.close != null);
 
         } catch (e) {
              return [];
